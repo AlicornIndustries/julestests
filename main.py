@@ -55,12 +55,12 @@ UI_FONT_SIZE = 24
 UI_FONT_NAME = "monospace" # Using a common monospace font
 
 # Player Ship Initial Settings (for reset)
-PLAYER_INITIAL_THRUST = 200000.0
+PLAYER_INITIAL_THRUST = 2000.0
 PLAYER_INITIAL_ROTATION_SPEED = 180.0 # degrees/sec
 PLAYER_INITIAL_MASS = 100.0
 
 # Enemy Settings
-ENEMY_DEFAULT_MASS = 200.0
+ENEMY_DEFAULT_MASS = 100.0
 ENEMY_DEFAULT_RADIUS = 12
 ENEMY_DEFAULT_HEALTH = 50
 ENEMY_DEFAULT_COLOR = COLOR_ENEMY_ORANGE
@@ -81,7 +81,7 @@ enemy_ships = [] # Specific list for active enemies (subset of physics_objects)
 player_ship = None # Player's ship instance
 
 # Physics Constants (initialized once)
-G_GAME = 50 # Significantly reduced for more manageable gravity and arcade feel
+G_GAME = 0.05 # Significantly reduced for more manageable gravity and arcade feel
 
 # --- Helper Functions ---
 
