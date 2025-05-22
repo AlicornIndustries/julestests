@@ -9,12 +9,200 @@ import pygame
 from vector import Vec2D # Assuming vector.py is in the same directory
 import math
 
-# Note: PhysicsObject is defined later in the file, but Projectile inherits from it.
-# This is acceptable in Python as long as PhysicsObject is defined before Projectile is instantiated.
-# However, for better readability, it's often preferred to define base classes before derived ones.
-# For this refactoring, keeping existing structure unless it causes errors.
+class PhysicsObject:
+    """
+    Base class for all objects in the game that are affected by physics (gravity, forces).
+    Handles position, velocity, acceleration, mass, and basic physics updates.
+    Also includes collision detection.
+    """
+    def __init__(self, mass, position_vec, velocity_vec=None, acceleration_vec=None, color=(255, 255, 255), radius=2):
+        """
+        Initializes a PhysicsObject.
 
-class Projectile(PhysicsObject): # Forward declaration implies PhysicsObject will be defined
+        Args:
+            mass (float): Mass of the object. Must be > 0.
+            position_vec (Vec2D): Initial position vector.
+            velocity_vec (Vec2D, optional): Initial velocity vector. Defaults to Vec2D(0,0).
+            acceleration_vec (Vec2D, optional): Initial non-gravitational acceleration. Defaults to Vec2D(0,0).
+            color (tuple, optional): RGB color tuple. Defaults to (255, 255, 255) (White).
+            radius (int, optional): Radius in pixels for drawing and collision. Defaults to 2.
+        """
+        if mass <= 0:
+            # Avoid division by zero in physics calculations if mass is zero or negative.
+            # Using a very small positive mass instead.
+            self.mass = 1e-6 
+        else:
+            self.mass = mass
+        self.position_vec = position_vec
+        self.velocity_vec = velocity_vec if velocity_vec is not None else Vec2D(0, 0)
+        # Stores non-gravitational acceleration (e.g., from thrusters). Reset each frame after use.
+        self.acceleration_vec = acceleration_vec if acceleration_vec is not None else Vec2D(0, 0) 
+        self.color = color
+        self.radius = radius
+
+    def apply_force(self, force_vec):
+        """
+        Applies a force to the object, contributing to its non-gravitational acceleration
+        for the current physics update cycle.
+        F = m*a => a = F/m.
+
+        Args:
+            force_vec (Vec2D): The force vector to apply.
+        """
+        if self.mass == 0: return # Should be prevented by __init__ mass check
+        self.acceleration_vec += force_vec / self.mass
+
+    def update_physics(self, delta_time, list_of_celestial_bodies, G_constant):
+        """
+        Updates the object's velocity and position based on gravitational forces
+        and any other applied forces (stored in self.acceleration_vec).
+        Resets non-gravitational acceleration after applying it.
+
+        Args:
+            delta_time (float): Time elapsed since the last frame.
+            list_of_celestial_bodies (list): List of CelestialBody objects to calculate gravity from.
+            G_constant (float): The gravitational constant.
+        """
+        # 1. Calculate total gravitational force and resulting acceleration
+        total_gravity_force = Vec2D(0, 0)
+        for body in list_of_celestial_bodies:
+            force_by_body = body.get_gravity_force_on(self.position_vec, self.mass, G_constant)
+            total_gravity_force += force_by_body
+        
+        gravitational_acceleration = total_gravity_force / self.mass
+
+        # 2. Total acceleration = non-gravitational (e.g., thrust) + gravitational
+        total_acceleration = self.acceleration_vec + gravitational_acceleration
+
+        # 3. Update velocity and position using total acceleration
+        self.velocity_vec += total_acceleration * delta_time
+        self.position_vec += self.velocity_vec * delta_time
+
+        # 4. Reset non-gravitational acceleration for the next frame.
+        # Forces like thrust must be applied each frame they are active.
+        self.acceleration_vec = Vec2D(0, 0)
+
+    def check_collision(self, other_object):
+        """
+        Checks for a circular collision with another object.
+
+        Args:
+            other_object (PhysicsObject or CelestialBody): The other object to check collision against.
+                                                           Must have `position_vec` and `radius` attributes.
+
+        Returns:
+            bool: True if a collision is detected, False otherwise.
+        """
+        # Ensure the other object has the necessary attributes for collision detection.
+        if not hasattr(other_object, 'position_vec') or not hasattr(other_object, 'radius'):
+            # Log an error or warning, or handle as appropriate for your game.
+            # print(f"Collision check failed: other_object missing attributes: {other_object}")
+            return False 
+
+        distance = self.position_vec.distance_to(other_object.position_vec)
+        return distance < (self.radius + other_object.radius)
+
+    def draw(self, screen, camera_offset_x=0, camera_offset_y=0):
+        """
+        Draws the physics object as a simple circle.
+        Subclasses may override this for more specific drawing.
+
+        Args:
+            screen (pygame.Surface): The Pygame surface to draw on.
+            camera_offset_x (float, optional): X offset for camera view. Defaults to 0.
+            camera_offset_y (float, optional): Y offset for camera view. Defaults to 0.
+        """
+        on_screen_x = int(self.position_vec.x + camera_offset_x)
+        on_screen_y = int(self.position_vec.y + camera_offset_y)
+        pygame.draw.circle(screen, self.color, (on_screen_x, on_screen_y), self.radius)
+
+
+class CelestialBody:
+    """
+    Represents a large celestial body like a planet or moon.
+    Exerts gravitational force on PhysicsObjects.
+    Is not a PhysicsObject itself; its position is fixed or pre-determined.
+    """
+    def __init__(self, mass, radius, position_vec, color, name="CelestialBody"):
+        """
+        Initializes a CelestialBody.
+
+        Args:
+            mass (float): Mass of the celestial body.
+            radius (int): Radius in pixels.
+            position_vec (Vec2D): Position vector (center of the body).
+            color (tuple): RGB color tuple.
+            name (str, optional): Name of the celestial body (e.g., "Planet", "Moon"). Defaults to "CelestialBody".
+        """
+        self.mass = mass
+        self.radius = radius
+        self.position_vec = position_vec
+        self.color = color
+        self.name = name
+        # Initialize font for rendering the name (can be None if pygame.font is not initialized)
+        try:
+            self.font = pygame.font.SysFont(None, 24) 
+        except Exception: # Broad exception if font system fails
+            self.font = None
+
+
+    def draw(self, screen, camera_offset_x=0, camera_offset_y=0):
+        """
+        Draws the celestial body and its name.
+
+        Args:
+            screen (pygame.Surface): The Pygame surface to draw on.
+            camera_offset_x (float, optional): X offset for camera view. Defaults to 0.
+            camera_offset_y (float, optional): Y offset for camera view. Defaults to 0.
+        """
+        on_screen_x = int(self.position_vec.x + camera_offset_x)
+        on_screen_y = int(self.position_vec.y + camera_offset_y)
+
+        pygame.draw.circle(screen, self.color, (on_screen_x, on_screen_y), self.radius)
+
+        if self.font: # Only render text if font was successfully loaded
+            name_surface = self.font.render(self.name, True, (255, 255, 255)) # White text
+            name_rect = name_surface.get_rect(center=(on_screen_x, on_screen_y - self.radius - 10)) # Position above body
+            screen.blit(name_surface, name_rect)
+
+    def get_gravity_force_on(self, other_object_position_vec, other_object_mass, G_constant):
+        """
+        Calculates the gravitational force exerted by this celestial body on another object.
+
+        Args:
+            other_object_position_vec (Vec2D): Position vector of the other object.
+            other_object_mass (float): Mass of the other object.
+            G_constant (float): The gravitational constant.
+
+        Returns:
+            Vec2D: The gravitational force vector acting on the other object (directed towards this body).
+        """
+        # Vector from the other object to this celestial body (force direction)
+        direction_vec = self.position_vec - other_object_position_vec
+
+        distance_sq = direction_vec.x**2 + direction_vec.y**2
+
+        # Prevent division by zero or instability at very small distances.
+        # A minimum distance squared threshold helps avoid extremely large forces.
+        min_distance_sq = max(1e-6, (self.radius * 0.1)**2) # Avoid issues if objects are too close or inside
+        if distance_sq < min_distance_sq:
+            # If objects are extremely close (e.g., inside each other),
+            # the gravitational model might break down.
+            # Returning zero force is a simple way to prevent instability.
+            # More complex models might cap the force or handle surface interactions.
+            return Vec2D(0, 0)
+
+        force_magnitude = (G_constant * self.mass * other_object_mass) / distance_sq
+        
+        # Normalize the direction vector to get a unit vector
+        # Check distance_sq again to be safe, though min_distance_sq should prevent it being zero.
+        if distance_sq == 0: # Should ideally not happen due to min_distance_sq
+            normalized_direction_vec = Vec2D(0,0)
+        else:
+            distance = math.sqrt(distance_sq)
+            normalized_direction_vec = direction_vec / distance
+
+class Projectile(PhysicsObject):
     """
     Represents a basic projectile fired by a weapon.
     Inherits from PhysicsObject for physics simulation.
@@ -463,199 +651,4 @@ class HomingMissile(Projectile):
                 
                 flame_radius = self.radius // 2 + 1
                 pygame.draw.circle(screen, (255,165,0), (screen_flame_pos_x, screen_flame_pos_y), flame_radius) # Orange flame
-
-
-class PhysicsObject:
-    """
-    Base class for all objects in the game that are affected by physics (gravity, forces).
-    Handles position, velocity, acceleration, mass, and basic physics updates.
-    Also includes collision detection.
-    """
-    def __init__(self, mass, position_vec, velocity_vec=None, acceleration_vec=None, color=(255, 255, 255), radius=2):
-        """
-        Initializes a PhysicsObject.
-
-        Args:
-            mass (float): Mass of the object. Must be > 0.
-            position_vec (Vec2D): Initial position vector.
-            velocity_vec (Vec2D, optional): Initial velocity vector. Defaults to Vec2D(0,0).
-            acceleration_vec (Vec2D, optional): Initial non-gravitational acceleration. Defaults to Vec2D(0,0).
-            color (tuple, optional): RGB color tuple. Defaults to (255, 255, 255) (White).
-            radius (int, optional): Radius in pixels for drawing and collision. Defaults to 2.
-        """
-        if mass <= 0:
-            # Avoid division by zero in physics calculations if mass is zero or negative.
-            # Using a very small positive mass instead.
-            self.mass = 1e-6 
-        else:
-            self.mass = mass
-        self.position_vec = position_vec
-        self.velocity_vec = velocity_vec if velocity_vec is not None else Vec2D(0, 0)
-        # Stores non-gravitational acceleration (e.g., from thrusters). Reset each frame after use.
-        self.acceleration_vec = acceleration_vec if acceleration_vec is not None else Vec2D(0, 0) 
-        self.color = color
-        self.radius = radius
-
-    def apply_force(self, force_vec):
-        """
-        Applies a force to the object, contributing to its non-gravitational acceleration
-        for the current physics update cycle.
-        F = m*a => a = F/m.
-
-        Args:
-            force_vec (Vec2D): The force vector to apply.
-        """
-        if self.mass == 0: return # Should be prevented by __init__ mass check
-        self.acceleration_vec += force_vec / self.mass
-
-    def update_physics(self, delta_time, list_of_celestial_bodies, G_constant):
-        """
-        Updates the object's velocity and position based on gravitational forces
-        and any other applied forces (stored in self.acceleration_vec).
-        Resets non-gravitational acceleration after applying it.
-
-        Args:
-            delta_time (float): Time elapsed since the last frame.
-            list_of_celestial_bodies (list): List of CelestialBody objects to calculate gravity from.
-            G_constant (float): The gravitational constant.
-        """
-        # 1. Calculate total gravitational force and resulting acceleration
-        total_gravity_force = Vec2D(0, 0)
-        for body in list_of_celestial_bodies:
-            force_by_body = body.get_gravity_force_on(self.position_vec, self.mass, G_constant)
-            total_gravity_force += force_by_body
-        
-        gravitational_acceleration = total_gravity_force / self.mass
-
-        # 2. Total acceleration = non-gravitational (e.g., thrust) + gravitational
-        total_acceleration = self.acceleration_vec + gravitational_acceleration
-
-        # 3. Update velocity and position using total acceleration
-        self.velocity_vec += total_acceleration * delta_time
-        self.position_vec += self.velocity_vec * delta_time
-
-        # 4. Reset non-gravitational acceleration for the next frame.
-        # Forces like thrust must be applied each frame they are active.
-        self.acceleration_vec = Vec2D(0, 0)
-
-    def check_collision(self, other_object):
-        """
-        Checks for a circular collision with another object.
-
-        Args:
-            other_object (PhysicsObject or CelestialBody): The other object to check collision against.
-                                                           Must have `position_vec` and `radius` attributes.
-
-        Returns:
-            bool: True if a collision is detected, False otherwise.
-        """
-        # Ensure the other object has the necessary attributes for collision detection.
-        if not hasattr(other_object, 'position_vec') or not hasattr(other_object, 'radius'):
-            # Log an error or warning, or handle as appropriate for your game.
-            # print(f"Collision check failed: other_object missing attributes: {other_object}")
-            return False 
-
-        distance = self.position_vec.distance_to(other_object.position_vec)
-        return distance < (self.radius + other_object.radius)
-
-    def draw(self, screen, camera_offset_x=0, camera_offset_y=0):
-        """
-        Draws the physics object as a simple circle.
-        Subclasses may override this for more specific drawing.
-
-        Args:
-            screen (pygame.Surface): The Pygame surface to draw on.
-            camera_offset_x (float, optional): X offset for camera view. Defaults to 0.
-            camera_offset_y (float, optional): Y offset for camera view. Defaults to 0.
-        """
-        on_screen_x = int(self.position_vec.x + camera_offset_x)
-        on_screen_y = int(self.position_vec.y + camera_offset_y)
-        pygame.draw.circle(screen, self.color, (on_screen_x, on_screen_y), self.radius)
-
-
-class CelestialBody:
-    """
-    Represents a large celestial body like a planet or moon.
-    Exerts gravitational force on other PhysicsObjects.
-    Is not a PhysicsObject itself; its position is fixed or pre-determined.
-    """
-    def __init__(self, mass, radius, position_vec, color, name="CelestialBody"):
-        """
-        Initializes a CelestialBody.
-
-        Args:
-            mass (float): Mass of the celestial body.
-            radius (int): Radius in pixels.
-            position_vec (Vec2D): Position vector (center of the body).
-            color (tuple): RGB color tuple.
-            name (str, optional): Name of the celestial body (e.g., "Planet", "Moon"). Defaults to "CelestialBody".
-        """
-        self.mass = mass
-        self.radius = radius
-        self.position_vec = position_vec
-        self.color = color
-        self.name = name
-        # Initialize font for rendering the name (can be None if pygame.font is not initialized)
-        try:
-            self.font = pygame.font.SysFont(None, 24) 
-        except Exception: # Broad exception if font system fails
-            self.font = None
-
-
-    def draw(self, screen, camera_offset_x=0, camera_offset_y=0):
-        """
-        Draws the celestial body and its name.
-
-        Args:
-            screen (pygame.Surface): The Pygame surface to draw on.
-            camera_offset_x (float, optional): X offset for camera view. Defaults to 0.
-            camera_offset_y (float, optional): Y offset for camera view. Defaults to 0.
-        """
-        on_screen_x = int(self.position_vec.x + camera_offset_x)
-        on_screen_y = int(self.position_vec.y + camera_offset_y)
-
-        pygame.draw.circle(screen, self.color, (on_screen_x, on_screen_y), self.radius)
-
-        if self.font: # Only render text if font was successfully loaded
-            name_surface = self.font.render(self.name, True, (255, 255, 255)) # White text
-            name_rect = name_surface.get_rect(center=(on_screen_x, on_screen_y - self.radius - 10)) # Position above body
-            screen.blit(name_surface, name_rect)
-
-    def get_gravity_force_on(self, other_object_position_vec, other_object_mass, G_constant):
-        """
-        Calculates the gravitational force exerted by this celestial body on another object.
-
-        Args:
-            other_object_position_vec (Vec2D): Position vector of the other object.
-            other_object_mass (float): Mass of the other object.
-            G_constant (float): The gravitational constant.
-
-        Returns:
-            Vec2D: The gravitational force vector acting on the other object (directed towards this body).
-        """
-        # Vector from the other object to this celestial body (force direction)
-        direction_vec = self.position_vec - other_object_position_vec
-
-        distance_sq = direction_vec.x**2 + direction_vec.y**2
-
-        # Prevent division by zero or instability at very small distances.
-        # A minimum distance squared threshold helps avoid extremely large forces.
-        min_distance_sq = max(1e-6, (self.radius * 0.1)**2) # Avoid issues if objects are too close or inside
-        if distance_sq < min_distance_sq:
-            # If objects are extremely close (e.g., inside each other),
-            # the gravitational model might break down.
-            # Returning zero force is a simple way to prevent instability.
-            # More complex models might cap the force or handle surface interactions.
-            return Vec2D(0, 0)
-
-        force_magnitude = (G_constant * self.mass * other_object_mass) / distance_sq
-        
-        # Normalize the direction vector to get a unit vector
-        # Check distance_sq again to be safe, though min_distance_sq should prevent it being zero.
-        if distance_sq == 0: # Should ideally not happen due to min_distance_sq
-            normalized_direction_vec = Vec2D(0,0)
-        else:
-            distance = math.sqrt(distance_sq)
-            normalized_direction_vec = direction_vec / distance
-
         return normalized_direction_vec * force_magnitude
